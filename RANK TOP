@@ -1,46 +1,69 @@
 --// SERVICES
 local Players = game:GetService("Players")
 local UIS = game:GetService("UserInputService")
-local TweenService = game:GetService("TweenService")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local HttpService = game:GetService("HttpService")
 
 local player = Players.LocalPlayer
-local UpgradeRemote = ReplicatedStorage:WaitForChild("Remotes"):WaitForChild("Upgrade"):WaitForChild("RequestUpgrade")
 
 --// SAVE SYSTEM
 local FILE = "UI_Save.json"
 local data = { 
     Toggles = {},
-    Settings = {
-        ToggleKey = "LeftControl"
-    }
+    Settings = { ToggleKey = "LeftControl", WalkSpeed = 16 }
 }
 
 if isfile and isfile(FILE) then
     local ok, res = pcall(function() return HttpService:JSONDecode(readfile(FILE)) end)
     if ok and res then 
-        -- Merge loaded data to ensure nested tables exist
         if res.Toggles then data.Toggles = res.Toggles end
         if res.Settings then data.Settings = res.Settings end
     end
 end
 
 local function save()
-    if writefile then writefile(FILE, HttpService:JSONEncode(data)) end
+    if writefile then pcall(function() writefile(FILE, HttpService:JSONEncode(data)) end) end
 end
 
+--// REMOTES
+local UpgradeRemote = nil
+task.spawn(function()
+    while not UpgradeRemote do
+        local remotes = ReplicatedStorage:FindFirstChild("Remotes")
+        if remotes then
+            local upgrade = remotes:FindFirstChild("Upgrade")
+            if upgrade then UpgradeRemote = upgrade:FindFirstChild("RequestUpgrade") end
+        end
+        task.wait(1)
+    end
+end)
+
+local RuneRemote = nil
+task.spawn(function()
+    while not RuneRemote do
+        for _, v in ipairs(ReplicatedStorage:GetDescendants()) do
+            if v.Name == "RequestRuneRoll" and v:IsA("RemoteEvent") then
+                RuneRemote = v
+                break
+            end
+        end
+        task.wait(1)
+    end
+end)
+
 --// GUI SETUP
-local gui = Instance.new("ScreenGui", player.PlayerGui)
+local gui = Instance.new("ScreenGui")
 gui.Name = "ControlPanel"
 gui.ResetOnSpawn = false
 gui.IgnoreGuiInset = true
+gui.Parent = player:WaitForChild("PlayerGui")
 
 local main = Instance.new("Frame", gui)
 main.Size = UDim2.new(0, 460, 0, 320)
 main.Position = UDim2.new(0.5, -230, 0.5, -160)
 main.BackgroundColor3 = Color3.fromRGB(18, 18, 22)
 main.ClipsDescendants = true
+main.Visible = true 
 Instance.new("UICorner", main).CornerRadius = UDim.new(0, 14)
 
 -- MOBILE TOGGLE
@@ -57,9 +80,19 @@ local function toggleUI()
     main.Visible = not main.Visible
 end
 
--- DYNAMIC KEYBIND LISTENER
+-- KEYBIND LISTENER
+local listeningForKey = false
 UIS.InputBegan:Connect(function(input, processed)
-    if not processed and input.UserInputType == Enum.UserInputType.Keyboard then
+    if processed then return end
+    if listeningForKey then
+        if input.UserInputType == Enum.UserInputType.Keyboard then
+            data.Settings.ToggleKey = input.KeyCode.Name
+            listeningForKey = false
+            save()
+            return
+        end
+    end
+    if input.UserInputType == Enum.UserInputType.Keyboard then
         if input.KeyCode.Name == data.Settings.ToggleKey then
             toggleUI()
         end
@@ -68,7 +101,7 @@ end)
 
 mobileToggle.MouseButton1Click:Connect(toggleUI)
 
--- TOP BAR
+-- TOP BAR (DRAGGING)
 local top = Instance.new("Frame", main)
 top.Size = UDim2.new(1, 0, 0, 40)
 top.BackgroundColor3 = Color3.fromRGB(25, 25, 30)
@@ -82,7 +115,6 @@ title.TextColor3 = Color3.new(1, 1, 1)
 title.Font = Enum.Font.GothamBold
 title.TextSize = 16
 
--- DRAGGING
 local dragging, dragStart, startPos
 top.InputBegan:Connect(function(i)
     if i.UserInputType == Enum.UserInputType.MouseButton1 or i.UserInputType == Enum.UserInputType.Touch then
@@ -91,17 +123,15 @@ top.InputBegan:Connect(function(i)
         startPos = main.Position
     end
 end)
-
 UIS.InputChanged:Connect(function(i)
     if dragging and (i.UserInputType == Enum.UserInputType.MouseMovement or i.UserInputType == Enum.UserInputType.Touch) then
         local delta = i.Position - dragStart
         main.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X, startPos.Y.Scale, startPos.Y.Offset + delta.Y)
     end
 end)
-
 UIS.InputEnded:Connect(function() dragging = false end)
 
--- SIDEBAR
+-- SIDEBAR & CONTENT
 local sidebar = Instance.new("Frame", main)
 sidebar.Size = UDim2.new(0, 120, 1, -40)
 sidebar.Position = UDim2.new(0, 0, 0, 40)
@@ -110,13 +140,11 @@ sidebar.BackgroundColor3 = Color3.fromRGB(20, 20, 25)
 local layoutSide = Instance.new("UIListLayout", sidebar)
 layoutSide.Padding = UDim.new(0, 6)
 
--- CONTENT
 local content = Instance.new("ScrollingFrame", main)
 content.Size = UDim2.new(1, -125, 1, -50)
 content.Position = UDim2.new(0, 125, 0, 45)
 content.BackgroundTransparency = 1
 content.ScrollBarThickness = 0
-content.CanvasSize = UDim2.new(0,0,0,0)
 
 local pages = {}
 
@@ -134,9 +162,7 @@ local function createPage(name)
     page.Size = UDim2.new(1, 0, 1, 0)
     page.Visible = false
     page.BackgroundTransparency = 1
-
-    local layout = Instance.new("UIListLayout", page)
-    layout.Padding = UDim.new(0, 6)
+    Instance.new("UIListLayout", page).Padding = UDim.new(0, 6)
 
     btn.MouseButton1Click:Connect(function()
         for _, p in pairs(pages) do p.Visible = false end
@@ -146,14 +172,6 @@ local function createPage(name)
     pages[name] = page
     return page
 end
-
--- CREATE PAGES
-local rebirth = createPage("Rebirth")
-local rp = createPage("RP")
-local gen = createPage("Generator")
-local settings = createPage("Settings")
-
-rebirth.Visible = true
 
 -- TOGGLE CREATOR
 local function createToggle(parent, text, key)
@@ -177,73 +195,127 @@ local function createToggle(parent, text, key)
     btn.BackgroundColor3 = Color3.fromRGB(50, 50, 55)
     Instance.new("UICorner", btn)
 
-    local state = data.Toggles[key] or false
+    local function set(v)
+        data.Toggles[key] = v
+        save()
+        btn.BackgroundColor3 = v and Color3.fromRGB(0, 180, 130) or Color3.fromRGB(50, 50, 55)
+        
+        if v then
+            task.spawn(function()
+                while data.Toggles[key] do
+                    if UpgradeRemote then
+                        pcall(function() UpgradeRemote:FireServer(key, "Max") end)
+                    end
+                    task.wait(0.5)
+                end
+            end)
+        end
+    end
+
+    set(data.Toggles[key] or false)
+    btn.MouseButton1Click:Connect(function() set(not data.Toggles[key]) end)
+end
+
+-- TREE CLICKER (REDUCED TO 0.01 TO PREVENT LAG)
+local function createTreeToggle(parent, text, key)
+    local holder = Instance.new("Frame", parent)
+    holder.Size = UDim2.new(1, -10, 0, 35)
+    holder.BackgroundTransparency = 1
+
+    local label = Instance.new("TextLabel", holder)
+    label.Size = UDim2.new(0.6, 0, 1, 0)
+    label.BackgroundTransparency = 1
+    label.Text = text
+    label.TextColor3 = Color3.new(1, 1, 1)
+    label.Font = Enum.Font.Gotham
+    label.TextSize = 12
+    label.TextXAlignment = Enum.TextXAlignment.Left
+
+    local btn = Instance.new("TextButton", holder)
+    btn.Size = UDim2.new(0, 45, 0, 20)
+    btn.Position = UDim2.new(1, -50, 0.5, -10)
+    btn.Text = ""
+    btn.BackgroundColor3 = Color3.fromRGB(50, 50, 55)
+    Instance.new("UICorner", btn)
 
     local function set(v)
-        state = v
         data.Toggles[key] = v
         save()
         btn.BackgroundColor3 = v and Color3.fromRGB(0, 180, 130) or Color3.fromRGB(50, 50, 55)
         if v then
             task.spawn(function()
                 while data.Toggles[key] do
-                    UpgradeRemote:FireServer(key, "Max")
-                    task.wait(0.3)
+                    local cd = workspace:FindFirstChild("LifeTree") and workspace.LifeTree:FindFirstChild("ClickDetector")
+                    if cd then
+                        fireclickdetector(cd)
+                    end
+                    task.wait(0.01) -- Stable high speed
                 end
             end)
         end
     end
 
-    set(state)
-    btn.MouseButton1Click:Connect(function() set(not state) end)
+    set(data.Toggles[key] or false)
+    btn.MouseButton1Click:Connect(function() set(not data.Toggles[key]) end)
 end
 
--- KEYBIND SETTING CREATOR
-local function createKeybindSetting(parent)
+-- RUNE TOGGLE
+local function createRuneToggle(parent, text, runeType)
     local holder = Instance.new("Frame", parent)
-    holder.Size = UDim2.new(1, -10, 0, 40)
+    holder.Size = UDim2.new(1, -10, 0, 35)
     holder.BackgroundTransparency = 1
 
     local label = Instance.new("TextLabel", holder)
     label.Size = UDim2.new(0.6, 0, 1, 0)
-    label.Text = "Menu Keybind:"
-    label.TextColor3 = Color3.new(1, 1, 1)
     label.BackgroundTransparency = 1
+    label.Text = text
+    label.TextColor3 = Color3.new(1, 1, 1)
     label.Font = Enum.Font.Gotham
+    label.TextSize = 12
     label.TextXAlignment = Enum.TextXAlignment.Left
 
-    local bindBtn = Instance.new("TextButton", holder)
-    bindBtn.Size = UDim2.new(0, 80, 0, 30)
-    bindBtn.Position = UDim2.new(1, -85, 0.5, -15)
-    bindBtn.BackgroundColor3 = Color3.fromRGB(40, 40, 45)
-    bindBtn.Text = data.Settings.ToggleKey
-    bindBtn.TextColor3 = Color3.fromRGB(0, 200, 255)
-    Instance.new("UICorner", bindBtn)
+    local btn = Instance.new("TextButton", holder)
+    btn.Size = UDim2.new(0, 45, 0, 20)
+    btn.Position = UDim2.new(1, -50, 0.5, -10)
+    btn.Text = ""
+    btn.BackgroundColor3 = Color3.fromRGB(50, 50, 55)
+    Instance.new("UICorner", btn)
 
-    local listening = false
-
-    bindBtn.MouseButton1Click:Connect(function()
-        if listening then return end
-        listening = true
-        bindBtn.Text = "..."
-        bindBtn.BackgroundColor3 = Color3.fromRGB(60, 60, 70)
-        
-        local connection
-        connection = UIS.InputBegan:Connect(function(i)
-            if i.UserInputType == Enum.UserInputType.Keyboard then
-                data.Settings.ToggleKey = i.KeyCode.Name
-                bindBtn.Text = i.KeyCode.Name
-                bindBtn.BackgroundColor3 = Color3.fromRGB(40, 40, 45)
-                save()
-                connection:Disconnect()
-                task.wait(0.1)
-                listening = false
-            end
-        end)
-    end)
+    local function set(v)
+        data.Toggles[runeType] = v
+        save()
+        btn.BackgroundColor3 = v and Color3.fromRGB(160, 32, 240) or Color3.fromRGB(50, 50, 55)
+        if v then
+            task.spawn(function()
+                while data.Toggles[runeType] do
+                    if RuneRemote then pcall(function() RuneRemote:FireServer(runeType) end) end
+                    task.wait(0.25)
+                end
+            end)
+        end
+    end
+    set(data.Toggles[runeType] or false)
+    btn.MouseButton1Click:Connect(function() set(not data.Toggles[runeType]) end)
 end
 
--- INITIALIZE CONTENT
+-- PAGES
+local wood = createPage("Wood")
+local rebirth = createPage("Rebirth")
+local rp = createPage("RP")
+local gen = createPage("Generator")
+local runes = createPage("Runes")
+local settings = createPage("Settings")
+
+wood.Visible = true
+
+-- WOOD PAGE
+createTreeToggle(wood, "Auto Click Tree (0.01s)", "autoClickTree")
+createToggle(wood, "WP Multi", "wpMulti")
+createToggle(wood, "WP Luck", "wpLuck")
+createToggle(wood, "WD Multi", "wdMulti")
+createToggle(wood, "WP Rune Bulk", "wpRuneBulk")
+
+-- REBIRTH PAGE
 createToggle(rebirth,"RB Multi","rbMulti")
 createToggle(rebirth,"RB Luck","rbLuck")
 createToggle(rebirth,"RB RP Multi","rbrpMulti")
@@ -251,14 +323,61 @@ createToggle(rebirth,"Rune Speed","rbRuneSpeed")
 createToggle(rebirth,"Rune Luck","rbRuneLuck")
 createToggle(rebirth,"Rune Bulk","rbRuneBulk")
 
+-- RP PAGE
 createToggle(rp,"Roll Speed","RollSpeed")
 createToggle(rp,"Rune Bulk","rpRuneBulk")
 createToggle(rp,"Multiplier","rpMulti")
 createToggle(rp,"Luck","rpLuck")
 
+-- GENERATOR PAGE
 createToggle(gen,"Generate Speed","generateSpeed")
 createToggle(gen,"EP Multi","epMulti")
-createToggle(gen,"EP Board","epBoard")
+createToggle(gen,"EP Board (Smart)","epBoard")
+createToggle(gen,"EP RB Multi","eprbMulti")
+createToggle(gen,"EP RB Luck","eprbLuck")
+createToggle(gen,"EP RB RP Multi","eprbrpMulti")
 
--- Settings Tab Content
-createKeybindSetting(settings)
+-- RUNES PAGE
+createRuneToggle(runes, "Nature Rune", "Nature")
+createRuneToggle(runes, "Electric Rune", "Electric")
+createRuneToggle(runes, "Release Rune", "Release")
+
+-- SETTINGS PAGE
+local function createSettingsButton(parent, text, callback)
+    local btn = Instance.new("TextButton", parent)
+    btn.Size = UDim2.new(1, -10, 0, 35)
+    btn.BackgroundColor3 = Color3.fromRGB(40, 40, 45)
+    btn.Text = text
+    btn.TextColor3 = Color3.new(1, 1, 1)
+    btn.Font = Enum.Font.Gotham
+    btn.TextSize = 12
+    Instance.new("UICorner", btn)
+    btn.MouseButton1Click:Connect(callback)
+    return btn
+end
+
+local bindBtn = createSettingsButton(settings, "Toggle Key: " .. data.Settings.ToggleKey, function()
+    listeningForKey = true
+end)
+
+local speedBtn = createSettingsButton(settings, "WalkSpeed: " .. data.Settings.WalkSpeed, function()
+    if data.Settings.WalkSpeed < 100 then
+        data.Settings.WalkSpeed = data.Settings.WalkSpeed + 10
+    else
+        data.Settings.WalkSpeed = 16
+    end
+    save()
+end)
+
+-- UPDATE LOOPS
+task.spawn(function()
+    while task.wait() do
+        bindBtn.Text = listeningForKey and "Press any key..." or "Toggle Key: " .. data.Settings.ToggleKey
+        speedBtn.Text = "WalkSpeed: " .. data.Settings.WalkSpeed
+        
+        local hum = player.Character and player.Character:FindFirstChild("Humanoid")
+        if hum then hum.WalkSpeed = data.Settings.WalkSpeed end
+    end
+end)
+
+print("✅ UI Updated: Clicker set to 0.01s & Speed Modifier Active.")
